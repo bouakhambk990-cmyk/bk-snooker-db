@@ -1,0 +1,26 @@
+{
+  "name": "BK Snooker Club — POS V4 Professional",
+  "short_name": "BK POS",
+  "description": "BK Snooker Club POS V4 Professional — ລະບົບຂາຍໜ້າຮ້ານ ແລະ ຈັດການໂຕະສະນຸກເກີ/ບິນລຽດ",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b1310",
+  "theme_color": "#16a34a",
+  "lang": "lo",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
