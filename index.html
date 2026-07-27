@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="lo" data-theme="dark">
 <head>
@@ -5439,7 +5440,13 @@ renderSettings();
     firebase.initializeApp(firebaseConfig);
     const db = firebase.database();
 
-    let _lastSyncedTablesJSON = null;
+    // ລະຫັດປະຈຳຕົວອຸປະກອນ/ແທັບນີ້ (ສ້າງໃໝ່ທຸກຄັ້ງທີ່ໂຫຼດໜ້າ) — ໃຊ້ແຍກແຍະວ່າການອັບເດດທີ່ໄດ້ຮັບມາຈາກ
+    // Firebase ນັ້ນແມ່ນ "ສຽງກ້ອງ" ຂອງການບັນທຶກຂອງອຸປະກອນນີ້ເອງ ຫຼື ແມ່ນມາຈາກອຸປະກອນ/ໜ້າຈໍອື່ນແທ້ໆ.
+    // (ສຳຄັນ: ບໍ່ໃຊ້ວິທີປຽບທຽບ JSON ຫຼ້າສຸດ ເພາະຖ້າມີການບັນທຶກ 2 ຄັ້ງຕິດກັນໄວໆ — ເຊັ່ນ ກົດ "⏸ ຢຸດ" ແລ້ວ
+    //  ຕາມດ້ວຍ "✅ ຢືນຢັນຊຳລະ" — echo ຂອງການບັນທຶກຄັ້ງທຳອິດອາດຈະມາຮອດຊ້າກວ່າ ແລະ ໄປທັບຂໍ້ມູນຫຼ້າສຸດ
+    //  ໃຫ້ກັບຄືນເປັນສະຖານະເກົ່າ — ນີ້ຄືສາເຫດຂອງບັນຫາ "ກົດຢຸດແລ້ວຊຳລະບໍ່ໄດ້" ທີ່ພົບມາກ່ອນ)
+    const _fbClientId = "c_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+    let _lastPushedTablesJSON = null; // ໃຊ້ພຽງແຕ່ຫຼີກລ່ຽງການສົ່ງຊ້ຳຂໍ້ມູນທີ່ບໍ່ປ່ຽນແປງ
 
     // 4. ໂຄງສ້າງທີ່ App ຫຼັກ (POS) ຈະເອີ້ນໃຊ້ — ເບິ່ງ FirebaseSync.pushTables / pushBill
     window.FirebaseSync = {
@@ -5449,9 +5456,10 @@ renderSettings();
         try{
           const clean = JSON.parse(JSON.stringify(tables||[])); // ຕັດ field ທີ່ເປັນ undefined ອອກ (Firebase ຮັບບໍ່ໄດ້)
           const json = JSON.stringify(clean);
-          if(json === _lastSyncedTablesJSON) return; // ບໍ່ມີການປ່ຽນແປງ ບໍ່ຕ້ອງສົ່ງຊ້ຳ
-          _lastSyncedTablesJSON = json;
-          db.ref("tables").set(clean).catch(err=>console.warn("Firebase pushTables ບໍ່ສຳເລັດ:", err.message));
+          if(json === _lastPushedTablesJSON) return; // ບໍ່ມີການປ່ຽນແປງ ບໍ່ຕ້ອງສົ່ງຊ້ຳ
+          _lastPushedTablesJSON = json;
+          db.ref("tables").set({ _origin: _fbClientId, _ts: Date.now(), data: clean })
+            .catch(err=>console.warn("Firebase pushTables ບໍ່ສຳເລັດ:", err.message));
         }catch(e){ console.warn("Firebase pushTables error:", e); }
       },
       // ບັນທຶກບິນທີ່ຊຳລະແລ້ວ ຂຶ້ນ Firebase (ນອກຈາກ localStorage)
@@ -5465,13 +5473,11 @@ renderSettings();
 
     // 5. ຮັບຟັງການອັບເດດໂຕະແບບ Realtime ຈາກອຸປະກອນ/ໜ້າຈໍອື່ນ (ເຊັ່ນ: ຄິດເງິນຢູ່ Tablet ໜຶ່ງ, ອີກເຄື່ອງເຫັນອັບເດດທັນທີ)
     db.ref("tables").on("value", (snapshot) => {
-      const data = snapshot.val();
-      if(!data) return; // ຍັງບໍ່ມີຂໍ້ມູນ (ຄັ້ງທຳອິດ)
-      const json = JSON.stringify(data);
-      if(json === _lastSyncedTablesJSON) return; // ອັນນີ້ແມ່ນຂໍ້ມູນທີ່ອຸປະກອນນີ້ເອງເປັນຄົນສົ່ງ, ຂ້າມ
-      _lastSyncedTablesJSON = json;
+      const payload = snapshot.val();
+      if(!payload || !payload.data) return; // ຍັງບໍ່ມີຂໍ້ມູນ (ຄັ້ງທຳອິດ) ຫຼື ຮູບແບບເກົ່າ
+      if(payload._origin === _fbClientId) return; // ນີ້ແມ່ນ echo ຂອງອຸປະກອນນີ້ເອງ — ຂ້າມສະເໝີ (ບໍ່ວ່າຈະມາຮອດຊ້າ/ໄວ)
       if(window.App && typeof window.App._applyRemoteTables === "function"){
-        window.App._applyRemoteTables(data);
+        window.App._applyRemoteTables(payload.data);
       }
     }, (err)=>{
       console.warn("Firebase ອ່ານຂໍ້ມູນໂຕະບໍ່ສຳເລັດ (ກວດ Database Rules):", err.message);
