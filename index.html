@@ -2188,11 +2188,21 @@ function escapeAttr(s){
   return (s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
 }
 
-App.openTableForGame = function(id, mode){
+App.openTableForGame = async function(id, mode){
   try{
     if(!requireAuthCheckpoint("openTableForGame")) return;
     const tb = state.tables.find(t=>t.id===id);
     if(!tb) return;
+
+    // ກວດລ໋ອກຜ່ານ Firebase ກ່ອນ (ຖ້າມີ Firebase ໃຫ້ໃຊ້) — ປ້ອງກັນ 2 ເຄື່ອງເປີດໂຕະດຽວກັນພ້ອມກັນ
+    if(window.FirebaseSync && typeof window.FirebaseSync.tryOpenTable === "function"){
+      const allowed = await window.FirebaseSync.tryOpenTable(id);
+      if(!allowed){
+        alert("ໂຕະນີ້ຖືກເປີດໄປແລ້ວຢູ່ອີກເຄື່ອງໜຶ່ງ!");
+        return;
+      }
+    }
+
     if(mode==="hourly" || mode==="game"){ tb.pricingMode = mode; }
     tb.status = "playing";
     tb.startTime = Date.now();
@@ -2267,7 +2277,7 @@ function restartModalTimer(id){
   }, 1000);
 }
 
-App.openTableWithCustomTime = function(id){
+App.openTableWithCustomTime = async function(id){
   const input = document.getElementById("customStartTime");
   if(!input || !input.value){ toast("ກະລຸນາເລືອກວັນທີ ແລະ ເວລາກ່ອນ"); return; }
   const ts = new Date(input.value).getTime();
@@ -2275,6 +2285,15 @@ App.openTableWithCustomTime = function(id){
   if(ts > Date.now()){ toast("ເວລາເລີ່ມຕ້ອງບໍ່ເກີນເວລາປັດຈຸບັນ"); return; }
   const tb = state.tables.find(t=>t.id===id);
   if(!tb) return;
+
+  if(window.FirebaseSync && typeof window.FirebaseSync.tryOpenTable === "function"){
+    const allowed = await window.FirebaseSync.tryOpenTable(id);
+    if(!allowed){
+      alert("ໂຕະນີ້ຖືກເປີດໄປແລ້ວຢູ່ອີກເຄື່ອງໜຶ່ງ!");
+      return;
+    }
+  }
+
   tb.status = "playing";
   tb.startTime = ts;
   tb.items = [];
@@ -2424,7 +2443,10 @@ App.saveBooking = function(){
 App.cancelBooking = function(id){
   openConfirm("ຍົກເລີກການຈອງ", "ຕ້ອງການຍົກເລີກການຈອງໂຕະນີ້ແທ້ບໍ?", ()=>{
     const tb = state.tables.find(t=>t.id===id);
-    if(tb){ tb.status="empty"; tb.booking=null; saveState(); renderTables(); }
+    if(tb){
+      tb.status="empty"; tb.booking=null; saveState(); renderTables();
+      try{ if(window.FirebaseSync && typeof window.FirebaseSync.releaseTable==="function") window.FirebaseSync.releaseTable(id); }catch(e){}
+    }
     App.closeModal("confirmModal"); App.closeModal("tableModal");
     toast("ຍົກເລີກການຈອງແລ້ວ");
   }, "ຍົກເລີກຈອງ");
@@ -2456,6 +2478,13 @@ App.confirmMoveTable = function(fromId, toId){
   to.games     = from.games||0;
   from.status = "empty"; from.startTime=null; from.items=[]; from.billNo=null; from.games=0;
   saveState(); renderTables();
+  // ອັບເດດລ໋ອກໃນ Firebase ນຳ: ປົດລ໋ອກໂຕະຕົ້ນທາງ, ລ໋ອກໂຕະປາຍທາງ
+  try{
+    if(window.FirebaseSync){
+      if(typeof window.FirebaseSync.releaseTable==="function") window.FirebaseSync.releaseTable(fromId);
+      if(typeof window.FirebaseSync.tryOpenTable==="function") window.FirebaseSync.tryOpenTable(toId);
+    }
+  }catch(e){}
   App.closeModal("moveTableModal"); App.closeModal("tableModal");
   toast(`ຍ້າຍຈາກໂຕະ ${fromId} → ໂຕະ ${toId} ແລ້ວ`);
 };
@@ -2669,6 +2698,7 @@ App.confirmPayment = function(){
     saveState(); renderTables();
     // ບັນທຶກບິນເຂົ້າ Firebase ນຳ (ນອກຈາກ localStorage) — ບໍ່ໃຫ້ຂັດຂວາງການອອກໃບເສັດຖ້າອິນເຕີເນັດ/Firebase ມີບັນຫາ
     try{ if(window.FirebaseSync && typeof window.FirebaseSync.pushBill==="function") window.FirebaseSync.pushBill(bill); }catch(e){}
+    try{ if(window.FirebaseSync && typeof window.FirebaseSync.releaseTable==="function") window.FirebaseSync.releaseTable(id); }catch(e){}
     try{ if(window.SupabaseSync && typeof window.SupabaseSync.pushBill==="function") window.SupabaseSync.pushBill(bill); }catch(e){}
     // ບັນທຶກບິນເຂົ້າ Google Sheets ນຳ (ຖ້າຕັ້ງ URL ໄວ້) — ບໍ່ໃຫ້ຂັດຂວາງການອອກໃບເສັດຖ້າມີບັນຫາ
     try{ if(window.GoogleSheetsSync && typeof window.GoogleSheetsSync.pushBill==="function") window.GoogleSheetsSync.pushBill(bill, state.gsheetWebhookUrl); }catch(e){}
@@ -6089,6 +6119,42 @@ renderSettings();
           const clean = JSON.parse(JSON.stringify(bill||{}));
           db.ref("orders/" + clean.billNo).set(clean).catch(err=>console.warn("Firebase pushBill ບໍ່ສຳເລັດ:", err.message));
         }catch(e){ console.warn("Firebase pushBill error:", e); }
+      },
+      // ພະຍາຍາມ "ລ໋ອກ" ໂຕະຜ່ານ Firebase Transaction ກ່ອນເປີດ — ປ້ອງກັນ 2 ເຄື່ອງເປີດໂຕະດຽວກັນພ້ອມກັນ (race condition)
+      // ຄືນຄ່າ Promise<boolean> => true ຖ້າລ໋ອກສຳເລັດ (ອະນຸຍາດໃຫ້ເປີດໂຕະ), false ຖ້າໂຕະຖືກເປີດໄປແລ້ວ
+      tryOpenTable(tableId){
+        try{
+          const tableRef = db.ref(`tables/${tableId}`);
+          return tableRef.transaction((currentData) => {
+            if (currentData) {
+              // ຖ້າໂຕະຖືກເປີດໄປແລ້ວ ໃຫ້ຍົກເລີກ (Abort)
+              if (currentData.status === 'busy') {
+                return; // undefined => ຍົກເລີກ transaction
+              }
+              // ຖ້າໂຕະຫວ່າງ ໃຫ້ປ່ຽນສະຖານະ
+              currentData.status = 'busy';
+              currentData.startTime = Date.now();
+              return currentData;
+            }
+            // ຍັງບໍ່ມີຂໍ້ມູນໂຕະນີ້ຢູ່ Firebase ເທື່ອ (ຄັ້ງທຳອິດ) — ສ້າງໃໝ່ວ່າ busy ໄປເລີຍ
+            return { status: 'busy', startTime: Date.now() };
+          }).then((result) => {
+            return !!result.committed;
+          }).catch((error) => {
+            console.warn("FirebaseSync tryOpenTable ບໍ່ສຳເລັດ:", error);
+            return true; // Firebase ມີບັນຫາ => ອະນຸຍາດເປີດຕໍ່ໄປ (fail-open) ບໍ່ໃຫ້ຄ້າງທຸລະກິດ
+          });
+        }catch(e){
+          console.warn("FirebaseSync tryOpenTable error:", e);
+          return Promise.resolve(true);
+        }
+      },
+      // ປົດລ໋ອກໂຕະ (ໃຊ້ຕອນປິດ/ຊຳລະບິນ ເພື່ອໃຫ້ໂຕະກັບມາຫວ່າງໃນ Firebase)
+      releaseTable(tableId){
+        try{
+          db.ref(`tables/${tableId}`).set({ status: 'free' })
+            .catch(err=>console.warn("FirebaseSync releaseTable ບໍ່ສຳເລັດ:", err.message));
+        }catch(e){ console.warn("FirebaseSync releaseTable error:", e); }
       }
     };
 
