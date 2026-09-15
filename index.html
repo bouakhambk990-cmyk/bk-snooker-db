@@ -1616,13 +1616,25 @@ if(!state.tables || state.tables.length === 0){
   saveState();
 }
 // ອັບເກຣດຂໍ້ມູນເກົ່າ: ໃຫ້ແນ່ໃຈວ່າທຸກໂຕະມີ field ຄິດໄລ່ລາຄາຕໍ່ເກມ + ລຶບສະຖານະ "pending" ເກົ່າ (ຟັງຊັນ ⏸ ຢຸດ ຖືກເອົາອອກແລ້ວ)
+// ນອກນັ້ນຮັບປະກັນວ່າທຸກໂຕະມີ items[] ສະເໝີ — ນີ້ຄືສາເຫດຫຼັກທີ່ບາງໂຕະ "ເພີ່ມລາຍການບໍ່ໄດ້":
+// ຖ້າ items undefined (ຂໍ້ມູນເກົ່າ/ບໍ່ຄົບ) ການກົດເພີ່ມຈະ throw error ສະເພາະໂຕະນັ້ນເທົ່ານັ້ນ ໂດຍທີ່ໂຕະອື່ນເຮັດວຽກປົກກະຕິ
+function ensureTableShape(t){
+  if(!Array.isArray(t.items)) t.items = [];
+  if(t.pricingMode===undefined) t.pricingMode = "hourly";
+  if(t.gamePrice===undefined) t.gamePrice = 5000;
+  if(t.games===undefined) t.games = 0;
+  if(t.status===undefined) t.status = "empty";
+  if(t.status==="pending") t.status = "playing"; // ຟັງຊັນ ⏸ ຢຸດ ຖືກເອົາອອກຖາວອນແລ້ວ
+  if(t.startTime===undefined) t.startTime = null;
+  if(t.billNo===undefined) t.billNo = null;
+  return t;
+}
 (function migrateTablePricing(){
   let changed = false;
   (state.tables||[]).forEach(t=>{
-    if(t.pricingMode===undefined){ t.pricingMode="hourly"; changed=true; }
-    if(t.gamePrice===undefined){ t.gamePrice=5000; changed=true; }
-    if(t.games===undefined){ t.games=0; changed=true; }
-    if(t.status==="pending"){ t.status="playing"; changed=true; } // ຟັງຊັນ ⏸ ຢຸດ ຖືກເອົາອອກຖາວອນແລ້ວ
+    const before = JSON.stringify(t);
+    ensureTableShape(t);
+    if(JSON.stringify(t) !== before) changed = true;
   });
   if(changed) saveState();
 })();
@@ -1681,6 +1693,9 @@ function _tryApplyPendingRemoteState(){
   const toApply = _pendingRemoteState;
   _pendingRemoteState = null;
   state = toApply;
+  // ຮັບປະກັນທຸກໂຕະຍັງມີໂຄງສ້າງຄົບຖ້ວນ (ໂດຍສະເພາະ items[]) ຫຼັງຮັບຂໍ້ມູນຈາກ Firebase —
+  // ກັນກໍລະນີ snapshot ເກົ່າ/ບໍ່ຄົບຈາກອຸປະກອນອື່ນມາທັບຂໍ້ມູນໃຫ້ບາງໂຕະຂາດ field ໄປ
+  try{ (state.tables||[]).forEach(ensureTableShape); }catch(e){}
   // ອັບເດດ localStorage ໂດຍກົງ (ບໍ່ຜ່ານ saveState ເພື່ອບໍ່ໃຫ້ push ກັບຄືນຫາ Firebase ວົນຊ້ຳ)
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
   renderAll();
@@ -2046,6 +2061,7 @@ function openTableModal(id){
   }
 }
 function renderTableModalBody(tb){
+  if(!Array.isArray(tb.items)) tb.items = []; // ກັນ error ຖ້າຂໍ້ມູນເກົ່າ/ບໍ່ຄົບບໍ່ມີ items
   const body = document.getElementById("tmBody");
 
   // ---- BOOKED ----
@@ -2325,6 +2341,7 @@ App.addItem = function(id){
     if(!requireAuthCheckpoint("addItem")) return;
     const tb = state.tables.find(t=>t.id===id);
     if(!tb){ console.warn("addItem checkpoint: ບໍ່ພົບໂຕະ", id); return; }
+    if(!Array.isArray(tb.items)) tb.items = []; // ກັນ error ຖ້າຂໍ້ມູນເກົ່າ/ບໍ່ຄົບບໍ່ມີ items
     tb.items.push({name:"", qty:1, price:0});
     saveState();
     refreshModalSummary(tb); // only refresh summary+list, not the whole modal
@@ -2344,7 +2361,7 @@ App.updateItem = function(id, idx, field, value){
   try{
     if(!requireAuthCheckpoint("updateItem")) return;
     const tb = state.tables.find(t=>t.id===id);
-    if(!tb || !tb.items[idx]) return;
+    if(!tb || !tb.items || !tb.items[idx]) return;
     if(field === "qty" || field === "price"){
       tb.items[idx][field] = Math.max(0, parseFloat(value) || 0);
     } else {
@@ -3159,20 +3176,23 @@ App.removeMenuItem = function(idx){
 };
 // Called from table modal when tapping a quick-add menu button
 App.addMenuItemToTable = function(tableId, menuIdx){
-  const menu = state.menuItems && state.menuItems[menuIdx];
-  if(!menu) return;
-  const tb = state.tables.find(t=>t.id===tableId);
-  if(!tb) return;
-  // If same item already in list, increment qty instead of duplicating
-  const existing = tb.items.find(it=>it.name === menu.name && it.price === menu.price);
-  if(existing){
-    existing.qty++;
-  } else {
-    tb.items.push({name: menu.name, qty: 1, price: menu.price});
-  }
-  saveState();
-  refreshModalSummary(tb);
-  toast(`ເພີ່ມ ${menu.name} ແລ້ວ`);
+  try{
+    const menu = state.menuItems && state.menuItems[menuIdx];
+    if(!menu) return;
+    const tb = state.tables.find(t=>t.id===tableId);
+    if(!tb) return;
+    if(!Array.isArray(tb.items)) tb.items = []; // ກັນ error ຖ້າຂໍ້ມູນເກົ່າ/ບໍ່ຄົບບໍ່ມີ items
+    // If same item already in list, increment qty instead of duplicating
+    const existing = tb.items.find(it=>it.name === menu.name && it.price === menu.price);
+    if(existing){
+      existing.qty++;
+    } else {
+      tb.items.push({name: menu.name, qty: 1, price: menu.price});
+    }
+    saveState();
+    refreshModalSummary(tb);
+    toast(`ເພີ່ມ ${menu.name} ແລ້ວ`);
+  }catch(e){ console.error("App.addMenuItemToTable error:", e); toast("ເກີດຂໍ້ຜິດພາດ, ລອງໃໝ່ອີກຄັ້ງ"); }
 };
 function renderUserList(){
   const list = document.getElementById("userList");
