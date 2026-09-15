@@ -2188,36 +2188,22 @@ function escapeAttr(s){
   return (s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
 }
 
-// ຫໍ່ (wrap) tryOpenTable ໃຫ້ "ບໍ່ມີວັນລົ້ມເຫຼວ" — ບໍ່ວ່າ Firebase ຈະ error, permission denied,
-// ຫຼືຄ້າງ (ບໍ່ resolve/reject ເລີຍ) ກໍ່ຕາມ, ຟັງຊັນນີ້ຈະຄືນຄ່າ true (ອະນຸຍາດເປີດໂຕະ) ສະເໝີພາຍໃນ 2.5 ວິນາທີ
-// => ການເປີດໂຕະຈະບໍ່ຄ້າງ/ບໍ່ສຳເລັດ ຍ້ອນບັນຫາ network/Firebase ອີກຕໍ່ໄປ
-async function safeTryOpenTable(id){
+// ບັນທຶກສະຖານະ "ບໍ່ວ່າງ" ຂຶ້ນ Firebase ແບບ "background" (ບໍ່ລໍຖ້າ, ບໍ່ຂັດຂວາງການເປີດໂຕະ) —
+// ໃຊ້ພຽງແຕ່ໃຫ້ອຸປະກອນອື່ນເຫັນຂໍ້ມູນ ບໍ່ໄດ້ໃຊ້ບລັອກ (block) ການເປີດໂຕະອີກຕໍ່ໄປ ເພື່ອບໍ່ໃຫ້ລະບົບຄ້າງ/ເອີເລີ
+// ບໍ່ວ່າ Firebase ຈະຊ້າ, ຂາດເນັດ, ຫຼື rules ປະຕິເສດກໍ່ຕາມ — ການເປີດໂຕະຢູ່ໜ້າຈໍນີ້ຈະສຳເລັດທັນທີສະເໝີ
+function markTableOpenBackground(id){
   try{
-    if(!window.FirebaseSync || typeof window.FirebaseSync.tryOpenTable !== "function") return true;
-    const guard = new Promise(resolve=> setTimeout(()=>resolve(true), 2500));
-    const result = await Promise.race([
-      window.FirebaseSync.tryOpenTable(id).catch(()=>true),
-      guard
-    ]);
-    return result !== false; // ຫຍັງກໍ່ຕາມນອກຈາກ false ຢ່າງແນ່ນອນ => ອະນຸຍາດ
-  }catch(e){
-    console.warn("safeTryOpenTable error:", e);
-    return true;
-  }
+    if(window.FirebaseSync && typeof window.FirebaseSync.tryOpenTable === "function"){
+      window.FirebaseSync.tryOpenTable(id).catch(()=>{});
+    }
+  }catch(e){ /* ບໍ່ສົນໃຈ error — ບໍ່ໃຫ້ກະທົບການເປີດໂຕະ */ }
 }
 
-App.openTableForGame = async function(id, mode){
+App.openTableForGame = function(id, mode){
   try{
     if(!requireAuthCheckpoint("openTableForGame")) return;
     const tb = state.tables.find(t=>t.id===id);
     if(!tb) return;
-
-    // ກວດລ໋ອກຜ່ານ Firebase ກ່ອນ (ຖ້າມີ Firebase ໃຫ້ໃຊ້) — ປ້ອງກັນ 2 ເຄື່ອງເປີດໂຕະດຽວກັນພ້ອມກັນ
-    const allowed = await safeTryOpenTable(id);
-    if(!allowed){
-      alert("ໂຕະນີ້ຖືກເປີດໄປແລ້ວຢູ່ອີກເຄື່ອງໜຶ່ງ!");
-      return;
-    }
 
     if(mode==="hourly" || mode==="game"){ tb.pricingMode = mode; }
     tb.status = "playing";
@@ -2231,6 +2217,8 @@ App.openTableForGame = async function(id, mode){
     renderTableModalBody(tb);
     restartModalTimer(id);
     toast(`ເປີດໂຕະ ${id} ແລ້ວ (${tb.pricingMode==="game"?"ແບບເກມ":"ແບບຊົ່ວໂມງ"})`);
+    // ອັບເດດ Firebase ຢູ່ພື້ນຫຼັງ — ບໍ່ລໍຖ້າ, ບໍ່ມີວັນເຮັດໃຫ້ການເປີດໂຕະນີ້ຄ້າງ/ລົ້ມເຫຼວ
+    markTableOpenBackground(id);
   }catch(e){
     console.error("App.openTableForGame error:", e);
     toast("ເປີດໂຕະບໍ່ສຳເລັດ, ລອງໃໝ່ອີກຄັ້ງ");
@@ -2293,7 +2281,7 @@ function restartModalTimer(id){
   }, 1000);
 }
 
-App.openTableWithCustomTime = async function(id){
+App.openTableWithCustomTime = function(id){
   const input = document.getElementById("customStartTime");
   if(!input || !input.value){ toast("ກະລຸນາເລືອກວັນທີ ແລະ ເວລາກ່ອນ"); return; }
   const ts = new Date(input.value).getTime();
@@ -2301,14 +2289,6 @@ App.openTableWithCustomTime = async function(id){
   if(ts > Date.now()){ toast("ເວລາເລີ່ມຕ້ອງບໍ່ເກີນເວລາປັດຈຸບັນ"); return; }
   const tb = state.tables.find(t=>t.id===id);
   if(!tb) return;
-
-  if(window.FirebaseSync && typeof window.FirebaseSync.tryOpenTable === "function"){
-    const allowed = await safeTryOpenTable(id);
-    if(!allowed){
-      alert("ໂຕະນີ້ຖືກເປີດໄປແລ້ວຢູ່ອີກເຄື່ອງໜຶ່ງ!");
-      return;
-    }
-  }
 
   tb.status = "playing";
   tb.startTime = ts;
@@ -2323,6 +2303,8 @@ App.openTableWithCustomTime = async function(id){
   const d = new Date(ts);
   const pad2 = n=>n.toString().padStart(2,"0");
   toast(`ເປີດໂຕະ ${id} ຍ້ອນຫຼັງ ${pad2(d.getHours())}:${pad2(d.getMinutes())} ແລ້ວ`);
+  // ອັບເດດ Firebase ຢູ່ພື້ນຫຼັງ — ບໍ່ລໍຖ້າ, ບໍ່ມີວັນເຮັດໃຫ້ການເປີດໂຕະນີ້ຄ້າງ/ລົ້ມເຫຼວ
+  markTableOpenBackground(id);
 };
 
 // ຈຸດເຊັກ (checkpoint) ກ່ອນເຮັດການປ່ຽນແປງຂໍ້ມູນ — ກັນກໍລະນີ session ຫາຍ/ຜິດປົກກະຕິແບບງຽບໆ
