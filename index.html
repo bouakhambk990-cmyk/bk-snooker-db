@@ -6037,33 +6037,54 @@ App.installPwa = function(){
 
 // Service Worker — GitHub Pages compatible (uses sw.js file via meta tag trick)
 // For GitHub Pages: sw.js ຢູ່ root ຂອງ repo, register ໂດຍກົງ
+//
+// ສຳຄັນ: ໃຊ້ strategy "network-first" (ດຶງເນັດກ່ອນສະເໝີ, cache ໄວ້ໃຊ້ຕອນອອບໄລນ໌ເທົ່ານັ້ນ)
+// ບໍ່ແມ່ນ "cache-first" ແບບເກົ່າ — ເພາະ cache-first ເຮັດໃຫ້ອຸປະກອນຄ້າງຢູ່ເວີຊັນທຳອິດທີ່ເຄີຍໂຫຼດຕະຫຼອດໄປ
+// (ອັບເດດ/ແກ້ບັນຫາຫຍັງກໍ່ຕາມ ຈະບໍ່ຮອດຜູ້ໃຊ້ຈົນກວ່າຈະລ້າງ cache ດ້ວຍມື). ອັນນີ້ຄືສາເຫດຫຼັກຂອງ "ແກ້ແລ້ວແຕ່ຍັງເປັນຢູ່".
+// ນອກນັ້ນ cache ຊື່ໃໝ່ (v6) ບັງຄັບໃຫ້ລ້າງ cache ເກົ່າ (v4/v5) ອອກໂດຍອັດຕະໂນມັດຕອນ activate.
 if("serviceWorker" in navigator){
   try{
     // ລອງ register sw.js (ສຳລັບ GitHub Pages deployment)
     navigator.serviceWorker.register("./sw.js", {scope:"./"}).then(reg=>{
       console.log("SW registered:", reg.scope);
+      // ບັງຄັບໃຫ້ກວດຫາເວີຊັນໃໝ່ທຸກຄັ້ງທີ່ໂຫຼດໜ້າ (ບໍ່ຖ້າ browser cache ຂອງ sw.js ເອງ)
+      reg.update().catch(()=>{});
     }).catch(()=>{
       // Fallback: inline SW ສຳລັບ localhost / single-file
       const swCode = [
-        'const C="bk-pos-v4";',
+        'const C="bk-pos-v6";', // v6: ປ່ຽນຊື່ cache ເພື່ອລ້າງເວີຊັນເກົ່າ (v4/v5) ອອກ
         'self.addEventListener("install",e=>self.skipWaiting());',
-        'self.addEventListener("activate",e=>self.clients.claim());',
+        'self.addEventListener("activate",e=>{',
+        '  e.waitUntil(caches.keys().then(keys=>Promise.all(',
+        '    keys.filter(k=>k!==C).map(k=>caches.delete(k))',
+        '  )));',
+        '  self.clients.claim();',
+        '});',
         'self.addEventListener("fetch",e=>{',
         '  if(e.request.method!=="GET")return;',
-        '  e.respondWith(caches.open(C).then(cache=>',
-        '    cache.match(e.request).then(r=>{',
-        '      const n=fetch(e.request).then(res=>{',
-        '        if(res&&res.status===200)cache.put(e.request,res.clone());',
-        '        return res;',
-        '      }).catch(()=>r);',
-        '      return r||n;',
-        '    })',
-        '  ));',
+        '  e.respondWith(',
+        '    fetch(e.request).then(res=>{',
+        '      if(res&&res.status===200){',
+        '        const clone=res.clone();',
+        '        caches.open(C).then(cache=>cache.put(e.request,clone));',
+        '      }',
+        '      return res;',
+        '    }).catch(()=>caches.match(e.request))', // ອອບໄລນ໌ເທົ່ານັ້ນຈຶ່ງໃຊ້ cache
+        '  );',
         '});'
       ].join("");
       const blob = new Blob([swCode],{type:"application/javascript"});
       const url  = URL.createObjectURL(blob);
-      navigator.serviceWorker.register(url,{scope:"/"}).catch(()=>{});
+      navigator.serviceWorker.register(url,{scope:"/"}).then(reg=>{
+        reg.update().catch(()=>{});
+      }).catch(()=>{});
+    });
+    // ຖ້າມີ SW ໃໝ່ພ້ອມແລ້ວ (ຫຼັງອັບເດດ) ໃຫ້ reload ໜ້າອັດຕະໂນມັດຄັ້ງດຽວ ເພື່ອໃຫ້ໄດ້ໂຄດເວີຊັນຫຼ້າສຸດທັນທີ
+    let _swRefreshed = false;
+    navigator.serviceWorker.addEventListener("controllerchange", ()=>{
+      if(_swRefreshed) return;
+      _swRefreshed = true;
+      location.reload();
     });
   }catch(e){}
 }
