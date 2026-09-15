@@ -2188,6 +2188,24 @@ function escapeAttr(s){
   return (s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
 }
 
+// ຫໍ່ (wrap) tryOpenTable ໃຫ້ "ບໍ່ມີວັນລົ້ມເຫຼວ" — ບໍ່ວ່າ Firebase ຈະ error, permission denied,
+// ຫຼືຄ້າງ (ບໍ່ resolve/reject ເລີຍ) ກໍ່ຕາມ, ຟັງຊັນນີ້ຈະຄືນຄ່າ true (ອະນຸຍາດເປີດໂຕະ) ສະເໝີພາຍໃນ 2.5 ວິນາທີ
+// => ການເປີດໂຕະຈະບໍ່ຄ້າງ/ບໍ່ສຳເລັດ ຍ້ອນບັນຫາ network/Firebase ອີກຕໍ່ໄປ
+async function safeTryOpenTable(id){
+  try{
+    if(!window.FirebaseSync || typeof window.FirebaseSync.tryOpenTable !== "function") return true;
+    const guard = new Promise(resolve=> setTimeout(()=>resolve(true), 2500));
+    const result = await Promise.race([
+      window.FirebaseSync.tryOpenTable(id).catch(()=>true),
+      guard
+    ]);
+    return result !== false; // ຫຍັງກໍ່ຕາມນອກຈາກ false ຢ່າງແນ່ນອນ => ອະນຸຍາດ
+  }catch(e){
+    console.warn("safeTryOpenTable error:", e);
+    return true;
+  }
+}
+
 App.openTableForGame = async function(id, mode){
   try{
     if(!requireAuthCheckpoint("openTableForGame")) return;
@@ -2195,12 +2213,10 @@ App.openTableForGame = async function(id, mode){
     if(!tb) return;
 
     // ກວດລ໋ອກຜ່ານ Firebase ກ່ອນ (ຖ້າມີ Firebase ໃຫ້ໃຊ້) — ປ້ອງກັນ 2 ເຄື່ອງເປີດໂຕະດຽວກັນພ້ອມກັນ
-    if(window.FirebaseSync && typeof window.FirebaseSync.tryOpenTable === "function"){
-      const allowed = await window.FirebaseSync.tryOpenTable(id);
-      if(!allowed){
-        alert("ໂຕະນີ້ຖືກເປີດໄປແລ້ວຢູ່ອີກເຄື່ອງໜຶ່ງ!");
-        return;
-      }
+    const allowed = await safeTryOpenTable(id);
+    if(!allowed){
+      alert("ໂຕະນີ້ຖືກເປີດໄປແລ້ວຢູ່ອີກເຄື່ອງໜຶ່ງ!");
+      return;
     }
 
     if(mode==="hourly" || mode==="game"){ tb.pricingMode = mode; }
@@ -2287,7 +2303,7 @@ App.openTableWithCustomTime = async function(id){
   if(!tb) return;
 
   if(window.FirebaseSync && typeof window.FirebaseSync.tryOpenTable === "function"){
-    const allowed = await window.FirebaseSync.tryOpenTable(id);
+    const allowed = await safeTryOpenTable(id);
     if(!allowed){
       alert("ໂຕະນີ້ຖືກເປີດໄປແລ້ວຢູ່ອີກເຄື່ອງໜຶ່ງ!");
       return;
